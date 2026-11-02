@@ -1,0 +1,614 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="description" content="Tunnel Run — steer a glowing orb through an endless neon tunnel of shifting gates. Free HTML5 game.">
+<title>Tunnel Run</title>
+<script>
+// 平台 SDK 按域名条件加载（独立运行时完全不加载，游戏行为不变）
+(function () {
+  var host = location.hostname || "";
+  try {
+    if (host.indexOf("crazygames") !== -1) {
+      var s1 = document.createElement("script");
+      s1.src = "https://sdk.crazygames.com/crazygames-sdk-v3.js";
+      s1.onload = function () {
+        if (window.CrazyGames && window.CrazyGames.SDK) {
+          window.CrazyGames.SDK.init().then(function () {
+            try { window.CrazyGames.SDK.game.loadingStart(); } catch (e) {}
+            window.addEventListener("load", function () { try { window.CrazyGames.SDK.game.loadingStop(); } catch (e) {} });
+          }).catch(function () {});
+        }
+      };
+      document.head.appendChild(s1);
+      window.__portal = "crazygames";
+    } else if (host.indexOf("gamedistribution") !== -1 || host.indexOf("html5.gamedistribution.com") !== -1 || host.indexOf("gd.games") !== -1) {
+      var s2 = document.createElement("script");
+      s2.src = "https://sdk.gamedistribution.com/v2/main.min.js";
+      document.head.appendChild(s2);
+      window.__portal = "gamedistribution";
+    }
+  } catch (e) {}
+})();
+</script>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { height:100%; overflow:hidden; background:#07070f; overscroll-behavior:none; font-family:-apple-system,"Segoe UI","PingFang SC",sans-serif; }
+  #wrap { height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+  #hud { display:flex; justify-content:space-between; align-items:center; padding:8px 4px; }
+  .stat { text-align:center; min-width:76px; }
+  .stat .label { font-size:10px; color:#5f8fa8; letter-spacing:2px; }
+  .stat .val { font-size:20px; font-weight:800; color:#aef4ff; text-shadow:0 0 10px rgba(64,220,255,.45); }
+  #title { font-size:14px; font-weight:800; letter-spacing:3px; color:#ff4fe1; text-shadow:0 0 14px rgba(255,47,214,.6); }
+  #muteBtn { background:transparent; border:1px solid #1e3a4a; color:#7fd8e8; border-radius:8px; font-size:10px; padding:5px 6px; cursor:pointer; letter-spacing:1px; min-width:66px; }
+  #muteBtn:active { transform:scale(.95); }
+  canvas { display:block; border-radius:14px; touch-action:none; background:#07070f; }
+  #overlay { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(4,6,14,.8); z-index:5; border-radius:14px; }
+  #panel { background:#0d1226; border:1px solid #24405c; border-radius:18px; padding:26px 34px; text-align:center; color:#fff; box-shadow:0 0 44px rgba(64,220,255,.14); }
+  #panel h2 { font-size:24px; margin-bottom:8px; letter-spacing:3px; color:#aef4ff; text-shadow:0 0 16px rgba(64,220,255,.55); }
+  #panel p { color:#8fa8c0; font-size:13px; margin-bottom:14px; line-height:1.65; }
+  #panel .final { font-size:34px; font-weight:900; color:#ffd76a; margin-bottom:16px; text-shadow:0 0 18px rgba(255,215,106,.45); }
+  #mainBtn { background:linear-gradient(135deg,#19d3ff,#ff2fd6); color:#fff; border:none; border-radius:12px; padding:12px 38px; font-size:16px; font-weight:800; cursor:pointer; letter-spacing:1px; }
+  #mainBtn:active { transform:scale(.97); }
+  #footer { color:#44597a; font-size:11px; padding:6px; letter-spacing:1px; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="hud">
+    <div class="stat"><div class="label">SCORE</div><div class="val" id="score">0</div></div>
+    <div id="title">TUNNEL RUN</div>
+    <button id="muteBtn">SFX ON</button>
+    <div class="stat"><div class="label">BEST</div><div class="val" id="best">0</div></div>
+  </div>
+  <div style="position:relative">
+    <canvas id="game"></canvas>
+    <div id="overlay"><div id="panel">
+      <h2 id="ovTitle">TUNNEL RUN</h2>
+      <p id="ovText">Steer through the shifting gates.<br>Orbs and gates give +1 &middot; walls kill.<br>Drag, or use &larr; / &rarr; (A / D).</p>
+      <div class="final" id="finalScore" style="display:none">0</div>
+      <button id="mainBtn">PLAY</button>
+    </div></div>
+  </div>
+  <div id="footer">Tunnel Run — a free arcade game</div>
+</div>
+<script>
+"use strict";
+// ---------- 常量 ----------
+var W = 420, H = 680;
+var RAIL = 16;                          // 两侧霓虹导轨宽度
+var PLAY_L = RAIL, PLAY_R = W - RAIL;   // 可玩区域左右边界
+var BALL_R = 9, PY = H - 110;           // 小球半径与固定纵坐标
+var WALL_H = 22, SPACING = 200;         // 墙厚与墙间距
+var V0 = 150, VMAX = 410, ACCEL = 9;    // 隧道滚动速度（随时间渐快）
+var STEER = 430;                        // 横向操控速度
+
+var canvas = document.getElementById("game");
+var ctx = canvas.getContext("2d");
+var vignette = null;
+
+// 画布自适应：竖屏优先，按可用空间等比缩放（逻辑坐标固定 420x680）
+function fit() {
+  var dpr = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  var availW = Math.min(window.innerWidth - 12, 470);
+  var availH = window.innerHeight - 108;   // 预留 HUD 与页脚
+  var s = Math.max(0.4, Math.min(availW / W, availH / H));
+  var cw = Math.round(W * s) + "px", ch = Math.round(H * s) + "px";
+  canvas.style.width = cw; canvas.style.height = ch;
+  document.getElementById("hud").style.width = cw;
+  vignette = ctx.createRadialGradient(W / 2, H / 2, H * 0.35, W / 2, H / 2, H * 0.72);
+  vignette.addColorStop(0, "rgba(0,0,0,0)");
+  vignette.addColorStop(1, "rgba(0,0,12,0.5)");
+}
+window.addEventListener("resize", fit);
+fit();
+
+// ---------- 状态 ----------
+var state = "START";   // START | RUN | DYING | OVER
+var score = 0, best = 0, shownScore = -1;
+var elapsed = 0, v = V0, worldScroll = 0;
+var px = W / 2, targetX = W / 2;
+var walls = [], orbs = [], pickups = [], particles = [], floats = [], lines = [], stars = [], trail = [];
+var shield = false, invuln = 0, nextShield = 500;
+var spawnY = -90, lastGC = W / 2;
+var shake = 0, dieTimer = 0, newBest = false, muted = false;
+var keys = { left: false, right: false };
+
+try { best = parseInt(localStorage.getItem("tr_best") || "0", 10) || 0; } catch (e) {}
+try { muted = localStorage.getItem("tr_muted") === "1"; } catch (e) {}
+document.getElementById("best").textContent = best;
+
+// 速度线（纯装饰，随速度流动）
+for (var i0 = 0; i0 < 26; i0++) {
+  lines.push({ x: PLAY_L + Math.random() * (PLAY_R - PLAY_L), y: Math.random() * H,
+               len: 30 + Math.random() * 70, k: 1.7 + Math.random() * 1.5, a: 0.04 + Math.random() * 0.08 });
+}
+// 远景星尘（视差）
+for (var i1 = 0; i1 < 42; i1++) {
+  stars.push({ x: Math.random() * W, y: Math.random() * H, r: 0.6 + Math.random() * 1.2,
+               a: 0.1 + Math.random() * 0.3, k: 0.22 + Math.random() * 0.2 });
+}
+
+// ---------- 工具 ----------
+function clamp(x, lo, hi) { return x < lo ? lo : (x > hi ? hi : x); }
+function rnd(a, b) { return a + Math.random() * (b - a); }
+// 圆 vs 轴对齐矩形（墙段）碰撞
+function circleRect(cx, cy, r, rx, ry, rw, rh) {
+  var nx = clamp(cx, rx, rx + rw), ny = clamp(cy, ry, ry + rh);
+  var dx = cx - nx, dy = cy - ny;
+  return dx * dx + dy * dy < r * r;
+}
+function burst(x, y, color, n, speed) {
+  for (var i = 0; i < n; i++) {
+    var a = Math.random() * Math.PI * 2, s = rnd(speed * 0.3, speed), life = rnd(0.35, 0.8);
+    particles.push({ x: x, y: y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, t: life, t0: life, color: color, size: rnd(1.5, 4) });
+  }
+}
+function floatText(x, y, text, color) { floats.push({ x: x, y: y, text: text, t: 0.9, t0: 0.9, color: color }); }
+function hexPath(c, r) {
+  c.beginPath();
+  for (var k = 0; k < 6; k++) {
+    var a = Math.PI / 3 * k - Math.PI / 6;
+    if (k === 0) c.moveTo(Math.cos(a) * r, Math.sin(a) * r);
+    else c.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+  }
+  c.closePath();
+}
+function roundRect(c, x, y, w, h, rad) {
+  c.beginPath();
+  c.moveTo(x + rad, y);
+  c.arcTo(x + w, y, x + w, y + h, rad);
+  c.arcTo(x + w, y + h, x, y + h, rad);
+  c.arcTo(x, y + h, x, y, rad);
+  c.arcTo(x, y, x + w, y, rad);
+  c.closePath();
+}
+
+// ---------- 音效（WebAudio 合成）----------
+var actx = null;
+function audioUnlock() {
+  try { if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+        if (actx.state === "suspended") actx.resume(); } catch (e) {}
+}
+function beep(freq, dur, type, gainv) {
+  if (muted) return;
+  try {
+    if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+    if (actx.state === "suspended") actx.resume();
+    var o = actx.createOscillator(), g = actx.createGain();
+    o.type = type || "sine"; o.frequency.value = freq;
+    g.gain.setValueAtTime(gainv || 0.1, actx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + dur);
+    o.connect(g); g.connect(actx.destination);
+    o.start(); o.stop(actx.currentTime + dur);
+  } catch (e) {}
+}
+
+// ---------- HUD ----------
+function updateScoreHUD() {
+  if (score !== shownScore) { shownScore = score; document.getElementById("score").textContent = score; }
+}
+function addScore(x, y, color) {
+  score++;
+  updateScoreHUD();
+  floatText(x, y, "+1", color);
+  if (score % 100 === 0) { floatText(W / 2, H * 0.35, "SPEED UP", "#ffd76a"); beep(880, 0.12, "square", 0.05); }
+}
+
+// ---------- 生成 ----------
+// 缺口中心做受限随机游走：|step| <= 0.72 * STEER * SPACING / v，
+// 即相邻两墙的缺口位移始终小于玩家在下一段路程里能横移的距离（连通性保证）。
+function spawnWall(y) {
+  var gw = Math.max(86, 124 - score * 0.03);            // 缺口随分数缓慢收窄
+  var lo = PLAY_L + gw / 2 + 18, hi = PLAY_R - gw / 2 - 18;
+  var maxStep = 0.72 * STEER * (SPACING / v);
+  var step = rnd(-1, 1) * maxStep + (W / 2 - lastGC) * 0.08;  // 轻微向中心回拉
+  step = clamp(step, -maxStep, maxStep);
+  var gc = clamp(lastGC + step, lo, hi);
+  lastGC = gc;
+  walls.push({ y: y, gc: gc, gw: gw, passed: false });
+  var midY = y - SPACING / 2;                            // 走廊中点：引导玩家进入下方缺口
+  if (score >= nextShield && !shield) {
+    pickups.push({ x: gc, y: midY, r: 12, ph: Math.random() * 6.28 });
+    nextShield += 500;                                   // 护盾每 500 分出现一次
+  } else {
+    orbs.push({ x: gc, y: midY, r: 8, ph: Math.random() * 6.28 });
+  }
+}
+
+// ---------- 流程 ----------
+function resetGame() {
+  score = 0; elapsed = 0; v = V0; worldScroll = 0;
+  walls.length = 0; orbs.length = 0; pickups.length = 0; particles.length = 0; floats.length = 0; trail.length = 0;
+  shield = false; invuln = 0; nextShield = 500;
+  spawnY = -90; lastGC = W / 2;
+  px = W / 2; targetX = W / 2;
+  shake = 0; dieTimer = 0; newBest = false;
+  shownScore = -1; updateScoreHUD();
+}
+function startRun() {
+  resetGame();
+  state = "RUN";
+  document.getElementById("overlay").style.display = "none";
+  audioUnlock();
+  beep(520, 0.1, "triangle", 0.08);
+  // 平台埋点：一局开始（SDK 已做域名守卫，独立运行时为空操作）
+  try {
+    if (window.__portal === "crazygames" && window.CrazyGames && window.CrazyGames.SDK) {
+      window.CrazyGames.SDK.game.gameplayStart();
+    }
+  } catch (e) {}
+}
+function die() {
+  state = "DYING"; dieTimer = 0.55; shake = 1;
+  burst(px, PY, "#7df3ff", 18, 260);
+  burst(px, PY, "#ff2fd6", 14, 200);
+  burst(px, PY, "#ffffff", 8, 320);
+  beep(160, 0.4, "sawtooth", 0.1);
+  beep(90, 0.5, "square", 0.07);
+  try { if (navigator.vibrate) navigator.vibrate(60); } catch (e) {}
+  if (score > best) {
+    best = score; newBest = true;
+    try { localStorage.setItem("tr_best", String(best)); } catch (e) {}
+    document.getElementById("best").textContent = best;
+  }
+  // 平台埋点：一局结束
+  try {
+    if (window.__portal === "crazygames" && window.CrazyGames && window.CrazyGames.SDK) {
+      window.CrazyGames.SDK.game.gameplayStop();
+      if (newBest) window.CrazyGames.SDK.game.happytime();
+    }
+  } catch (e) {}
+}
+function showOver() {
+  state = "OVER";
+  document.getElementById("ovTitle").textContent = "GAME OVER";
+  document.getElementById("ovText").innerHTML = newBest ? "New best run!" : "The tunnel claims another runner.";
+  var fs = document.getElementById("finalScore");
+  fs.style.display = "block"; fs.textContent = score;
+  document.getElementById("mainBtn").textContent = "PLAY AGAIN";
+  document.getElementById("overlay").style.display = "flex";
+}
+
+// ---------- 更新 ----------
+function update(dt) {
+  var i, w;
+  if (state === "RUN") {
+    elapsed += dt;
+    v = Math.min(VMAX, V0 + elapsed * ACCEL);
+    worldScroll += v * dt;
+
+    // 操控：键盘直接推目标点，触摸/鼠标拖拽设目标点，小球平滑跟随
+    var dir = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
+    if (dir) targetX += dir * STEER * dt;
+    targetX = clamp(targetX, PLAY_L + BALL_R, PLAY_R - BALL_R);
+    px += (targetX - px) * Math.min(1, dt * 14);
+    px = clamp(px, PLAY_L + BALL_R, PLAY_R - BALL_R);
+
+    // 拖尾（世界坐标，随隧道下移）
+    trail.push({ x: px, y: PY });
+    if (trail.length > 12) trail.shift();
+    for (i = 0; i < trail.length; i++) trail[i].y += v * dt;
+
+    // 横移时喷出推进粒子
+    if (Math.abs(targetX - px) > 26 && Math.random() < 0.5) {
+      particles.push({ x: px - (targetX - px > 0 ? 8 : -8), y: PY + 4,
+                       vx: -Math.sign(targetX - px) * rnd(30, 80), vy: rnd(-20, 40),
+                       t: 0.3, t0: 0.3, color: "#19d3ff", size: rnd(1, 2.5) });
+    }
+
+    // 追平旧纪录的瞬间提示
+    if (best > 0 && score === best + 1 && !newBest) {
+      newBest = true;
+      floatText(W / 2, H * 0.42, "NEW BEST!", "#ffd76a");
+      beep(990, 0.14, "triangle", 0.08);
+    }
+
+    // 生成墙
+    spawnY += v * dt;
+    while (spawnY > -30) { spawnWall(spawnY); spawnY -= SPACING; }
+
+    // 墙下移 + 计过墙分
+    for (i = walls.length - 1; i >= 0; i--) {
+      w = walls[i]; w.y += v * dt;
+      if (!w.passed && w.y > PY + BALL_R) {
+        w.passed = true;
+        addScore(w.gc, w.y + WALL_H + 16, "rgba(255,120,230,0.9)");
+        beep(340, 0.05, "triangle", 0.045);
+      }
+      if (w.y > H + 80) walls.splice(i, 1);
+    }
+    // 能量块
+    for (i = orbs.length - 1; i >= 0; i--) {
+      var o = orbs[i]; o.y += v * dt; o.ph += dt * 5;
+      if (o.y > H + 40) { orbs.splice(i, 1); continue; }
+      var dx = o.x - px, dy = o.y - PY;
+      if (dx * dx + dy * dy < (o.r + BALL_R) * (o.r + BALL_R)) {
+        orbs.splice(i, 1);
+        addScore(o.x, o.y - 14, "#7df3ff");
+        burst(o.x, o.y, "#7df3ff", 8, 140);
+        beep(760, 0.08, "sine", 0.09);
+      }
+    }
+    // 护盾道具
+    for (i = pickups.length - 1; i >= 0; i--) {
+      var s = pickups[i]; s.y += v * dt; s.ph += dt * 4;
+      if (s.y > H + 40) { pickups.splice(i, 1); continue; }
+      var dx2 = s.x - px, dy2 = s.y - PY;
+      if (dx2 * dx2 + dy2 * dy2 < (s.r + BALL_R + 2) * (s.r + BALL_R + 2)) {
+        pickups.splice(i, 1); shield = true;
+        floatText(s.x, s.y - 16, "SHIELD", "#ffd76a");
+        burst(s.x, s.y, "#ffd76a", 14, 180);
+        beep(620, 0.09, "square", 0.08);
+        setTimeout(function () { beep(930, 0.12, "square", 0.08); }, 90);
+      }
+    }
+    // 碰撞：无敌帧期间穿过墙体（护盾抵挡后的逃生窗口）
+    if (invuln > 0) {
+      invuln -= dt;
+    } else {
+      for (i = 0; i < walls.length; i++) {
+        w = walls[i];
+        if (PY + BALL_R < w.y || PY - BALL_R > w.y + WALL_H) continue;
+        var gl = w.gc - w.gw / 2, gr = w.gc + w.gw / 2;
+        var hitL = gl > PLAY_L && circleRect(px, PY, BALL_R, PLAY_L, w.y, gl - PLAY_L, WALL_H);
+        var hitR = gr < PLAY_R && circleRect(px, PY, BALL_R, gr, w.y, PLAY_R - gr, WALL_H);
+        if (hitL || hitR) {
+          if (shield) {
+            // 护盾抵挡一次：消耗护盾 + 短暂无敌穿过这堵墙
+            shield = false; invuln = 1.3;
+            shake = Math.max(shake, 0.45);
+            floatText(px, PY - 26, "SHIELD!", "#ffd76a");
+            burst(px, PY, "#ffd76a", 16, 220);
+            beep(220, 0.18, "square", 0.1);
+            try { if (navigator.vibrate) navigator.vibrate(30); } catch (e) {}
+          } else {
+            die();
+          }
+          break;
+        }
+      }
+    }
+  } else if (state === "DYING") {
+    dieTimer -= dt;
+    if (dieTimer <= 0) showOver();
+  } else if (state === "START") {
+    worldScroll += 45 * dt;   // 菜单背景缓慢流动
+  }
+
+  // 通用特效更新（死亡后也继续播放）
+  for (var p = particles.length - 1; p >= 0; p--) {
+    var pt = particles[p];
+    pt.t -= dt;
+    if (pt.t <= 0) { particles.splice(p, 1); continue; }
+    pt.x += pt.vx * dt; pt.y += pt.vy * dt;
+    pt.vx *= (1 - dt * 1.6); pt.vy *= (1 - dt * 1.6);
+  }
+  for (var f = floats.length - 1; f >= 0; f--) {
+    var fl = floats[f];
+    fl.t -= dt; fl.y -= 46 * dt;
+    if (fl.t <= 0) floats.splice(f, 1);
+  }
+  if (shake > 0) shake = Math.max(0, shake - dt * 1.8);
+  var lv = state === "RUN" ? v : 60;
+  for (i = 0; i < lines.length; i++) {
+    var ln = lines[i];
+    ln.y += lv * ln.k * dt;
+    if (ln.y > H + ln.len) { ln.y = -ln.len; ln.x = PLAY_L + Math.random() * (PLAY_R - PLAY_L); }
+  }
+  for (i = 0; i < stars.length; i++) {
+    var st = stars[i];
+    st.y += lv * st.k * dt;
+    if (st.y > H + 2) { st.y = -2; st.x = Math.random() * W; }
+  }
+}
+
+// ---------- 渲染 ----------
+function render() {
+  var bg = ctx.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, "#0a0d20"); bg.addColorStop(0.55, "#07070f"); bg.addColorStop(1, "#0c0a18");
+  ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+
+  ctx.save();
+  if (shake > 0) ctx.translate((Math.random() * 2 - 1) * 9 * shake, (Math.random() * 2 - 1) * 9 * shake);
+
+  // 远景星尘
+  for (var i = 0; i < stars.length; i++) {
+    var st = stars[i];
+    ctx.globalAlpha = st.a;
+    ctx.fillStyle = "#9fd8ff";
+    ctx.fillRect(st.x, st.y, st.r, st.r * 2.5);
+  }
+  ctx.globalAlpha = 1;
+
+  // 扫描线（随滚动移动，营造前进感）
+  var off = worldScroll % 90;
+  ctx.strokeStyle = "rgba(120,220,255,0.05)"; ctx.lineWidth = 1;
+  for (var y = off - 90; y < H; y += 90) {
+    ctx.beginPath(); ctx.moveTo(PLAY_L, y); ctx.lineTo(PLAY_R, y); ctx.stroke();
+  }
+
+  // 速度线
+  for (i = 0; i < lines.length; i++) {
+    var ln = lines[i];
+    ctx.strokeStyle = "rgba(140,240,255," + ln.a + ")"; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(ln.x, ln.y); ctx.lineTo(ln.x, ln.y + ln.len); ctx.stroke();
+  }
+
+  // 两侧霓虹导轨
+  ctx.shadowColor = "#19d3ff"; ctx.shadowBlur = 14;
+  ctx.fillStyle = "#0e2b3d";
+  ctx.fillRect(0, 0, RAIL, H); ctx.fillRect(W - RAIL, 0, RAIL, H);
+  ctx.fillStyle = "#19d3ff";
+  ctx.fillRect(RAIL - 2, 0, 2, H); ctx.fillRect(W - RAIL, 0, 2, H);
+  ctx.shadowBlur = 0;
+
+  // 障碍墙（品红霓虹，中央留缺口）
+  for (i = 0; i < walls.length; i++) {
+    var w = walls[i];
+    var gl = w.gc - w.gw / 2, gr = w.gc + w.gw / 2;
+    ctx.shadowColor = "#ff2fd6"; ctx.shadowBlur = 12;
+    ctx.fillStyle = "#c81fbe";
+    if (gl > PLAY_L) { roundRect(ctx, PLAY_L, w.y, gl - PLAY_L, WALL_H, 5); ctx.fill(); }
+    if (gr < PLAY_R) { roundRect(ctx, gr, w.y, PLAY_R - gr, WALL_H, 5); ctx.fill(); }
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = "rgba(255,255,255,0.75)";   // 缺口边缘亮线
+    if (gl > PLAY_L) ctx.fillRect(gl - 2, w.y, 2, WALL_H);
+    if (gr < PLAY_R) ctx.fillRect(gr, w.y, 2, WALL_H);
+  }
+
+  // 能量块（青色脉冲圆）
+  for (i = 0; i < orbs.length; i++) {
+    var o = orbs[i];
+    var rr = o.r + Math.sin(o.ph) * 1.5;
+    ctx.shadowColor = "#19d3ff"; ctx.shadowBlur = 12;
+    ctx.fillStyle = "#7df3ff";
+    ctx.beginPath(); ctx.arc(o.x, o.y, rr, 0, Math.PI * 2); ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = "#ffffff";
+    ctx.beginPath(); ctx.arc(o.x, o.y, rr * 0.45, 0, Math.PI * 2); ctx.fill();
+  }
+
+  // 护盾道具（金色六边形）
+  for (i = 0; i < pickups.length; i++) {
+    var s = pickups[i];
+    var pulse = 1 + Math.sin(s.ph) * 0.12;
+    ctx.save();
+    ctx.translate(s.x, s.y); ctx.rotate(Math.sin(s.ph * 0.5) * 0.3);
+    ctx.shadowColor = "#ffd76a"; ctx.shadowBlur = 14;
+    ctx.fillStyle = "#ffd76a";
+    hexPath(ctx, 12 * pulse); ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = "#0d1226";
+    hexPath(ctx, 6 * pulse); ctx.fill();
+    ctx.restore();
+  }
+
+  // 拖尾
+  for (i = 0; i < trail.length; i++) {
+    var tp = trail[i], f = (i + 1) / trail.length;
+    ctx.globalAlpha = f * 0.28;
+    ctx.fillStyle = "#19d3ff";
+    ctx.beginPath(); ctx.arc(tp.x, tp.y, BALL_R * f * 0.9, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  // 小球（死亡后隐藏）
+  if (state !== "DYING" && state !== "OVER") {
+    var blink = invuln > 0 && Math.floor(invuln * 12) % 2 === 0;
+    ctx.globalAlpha = blink ? 0.35 : 1;
+    ctx.shadowColor = "#19d3ff"; ctx.shadowBlur = 18;
+    ctx.fillStyle = "#ffffff";
+    ctx.beginPath(); ctx.arc(px, PY, BALL_R, 0, Math.PI * 2); ctx.fill();
+    ctx.shadowBlur = 0;
+    if (shield) {
+      ctx.strokeStyle = "#ffd76a"; ctx.lineWidth = 2.5;
+      ctx.shadowColor = "#ffd76a"; ctx.shadowBlur = 10;
+      ctx.beginPath(); ctx.arc(px, PY, BALL_R + 6 + Math.sin(elapsed * 6) * 1.5, 0, Math.PI * 2); ctx.stroke();
+      ctx.shadowBlur = 0;
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // 粒子
+  for (i = 0; i < particles.length; i++) {
+    var pt = particles[i];
+    ctx.globalAlpha = Math.max(0, pt.t / pt.t0);
+    ctx.fillStyle = pt.color;
+    ctx.fillRect(pt.x - pt.size / 2, pt.y - pt.size / 2, pt.size, pt.size);
+  }
+  ctx.globalAlpha = 1;
+
+  // 浮动文字
+  for (i = 0; i < floats.length; i++) {
+    var fl = floats[i];
+    ctx.globalAlpha = Math.max(0, fl.t / fl.t0);
+    ctx.fillStyle = fl.color;
+    ctx.font = "800 15px -apple-system, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText(fl.text, fl.x, fl.y);
+  }
+  ctx.globalAlpha = 1;
+
+  // 开局操控提示
+  if (state === "RUN" && elapsed < 2.6) {
+    ctx.globalAlpha = Math.max(0, (2.6 - elapsed) / 2.6) * 0.75;
+    ctx.fillStyle = "#aef4ff";
+    ctx.font = "600 14px -apple-system, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("DRAG OR USE ARROW KEYS", W / 2, PY - 60);
+    ctx.globalAlpha = 1;
+  }
+
+  // 暗角
+  if (vignette) { ctx.fillStyle = vignette; ctx.fillRect(0, 0, W, H); }
+  ctx.restore();
+}
+
+// ---------- 主循环（dt 限制上限，防切后台回来瞬移）----------
+var last = 0;
+function frame(t) {
+  var dt = Math.min((t - last) / 1000, 0.05);
+  last = t;
+  update(dt);
+  render();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+// ---------- 输入 ----------
+function ptrX(clientX) {
+  var rect = canvas.getBoundingClientRect();
+  return (clientX - rect.left) / rect.width * W;
+}
+canvas.addEventListener("mousemove", function (e) { if (state === "RUN") targetX = ptrX(e.clientX); });
+canvas.addEventListener("mousedown", function (e) { audioUnlock(); if (state === "RUN") targetX = ptrX(e.clientX); });
+canvas.addEventListener("touchstart", function (e) {
+  e.preventDefault(); audioUnlock();
+  if (state === "RUN") targetX = ptrX(e.touches[0].clientX);
+}, { passive: false });
+canvas.addEventListener("touchmove", function (e) {
+  e.preventDefault();
+  if (state === "RUN") targetX = ptrX(e.touches[0].clientX);
+}, { passive: false });
+
+document.addEventListener("keydown", function (e) {
+  if (e.key === "ArrowLeft" || e.key === "a" || e.key === "A") { keys.left = true; e.preventDefault(); }
+  if (e.key === "ArrowRight" || e.key === "d" || e.key === "D") { keys.right = true; e.preventDefault(); }
+  if (e.key === " " || e.key === "Enter") {
+    e.preventDefault();
+    if (state === "START" || state === "OVER") startRun();
+  }
+});
+document.addEventListener("keyup", function (e) {
+  if (e.key === "ArrowLeft" || e.key === "a" || e.key === "A") keys.left = false;
+  if (e.key === "ArrowRight" || e.key === "d" || e.key === "D") keys.right = false;
+});
+
+document.getElementById("mainBtn").addEventListener("click", function (e) { e.stopPropagation(); startRun(); });
+
+var muteBtn = document.getElementById("muteBtn");
+function muteLabel() { muteBtn.textContent = muted ? "SFX OFF" : "SFX ON"; }
+muteBtn.addEventListener("click", function (e) {
+  e.stopPropagation();
+  muted = !muted;
+  try { localStorage.setItem("tr_muted", muted ? "1" : "0"); } catch (err) {}
+  muteLabel();
+  if (!muted) { audioUnlock(); beep(660, 0.07, "sine", 0.08); }
+});
+muteLabel();
+
+resetGame();
+// 调试/测试钩子（不影响游戏逻辑）
+window.__tr = {
+  get score() { return score; }, get state() { return state; },
+  get shield() { return shield; }, get walls() { return walls.length; },
+  get wallsList() { return walls.map(function (w) { return { y: Math.round(w.y), gc: Math.round(w.gc), gw: Math.round(w.gw) }; }); },
+  get px() { return px; }, get best() { return best; }, get muted() { return muted; }
+};
+</script>
+</body>
+</html>
