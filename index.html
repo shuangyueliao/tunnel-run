@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<meta name="description" content="Tunnel Run — steer a glowing orb through an endless neon tunnel of shifting gates. Free HTML5 game.">
-<title>Tunnel Run</title>
+<meta name="description" content="光廊冲刺 — 控制发光小球穿过不断变化的霓虹闸门，免费 HTML5 小游戏。">
+<title>光廊冲刺</title>
 <script>
 // 平台 SDK 按域名条件加载（独立运行时完全不加载，游戏行为不变）
 (function () {
@@ -57,21 +57,21 @@
 <body>
 <div id="wrap">
   <div id="hud">
-    <div class="stat"><div class="label">SCORE</div><div class="val" id="score">0</div></div>
-    <div id="title">TUNNEL RUN</div>
-    <button id="muteBtn">SFX ON</button>
-    <div class="stat"><div class="label">BEST</div><div class="val" id="best">0</div></div>
+    <div class="stat"><div class="label">得分</div><div class="val" id="score">0</div></div>
+    <div id="title">光廊冲刺</div>
+    <button id="muteBtn">音效:开</button>
+    <div class="stat"><div class="label">最高</div><div class="val" id="best">0</div></div>
   </div>
   <div style="position:relative">
     <canvas id="game"></canvas>
     <div id="overlay"><div id="panel">
-      <h2 id="ovTitle">TUNNEL RUN</h2>
-      <p id="ovText">Steer through the shifting gates.<br>Orbs and gates give +1 &middot; walls kill.<br>Drag, or use &larr; / &rarr; (A / D).</p>
+      <h2 id="ovTitle">光廊冲刺</h2>
+      <p id="ovText">穿过不断移动的霓虹闸门。<br>过门、收光球都 +1 分 · 撞墙即失败。<br>拖动屏幕，或用 &larr; / &rarr;（A / D）操作。</p>
       <div class="final" id="finalScore" style="display:none">0</div>
-      <button id="mainBtn">PLAY</button>
+      <button id="mainBtn">开始游戏</button>
     </div></div>
   </div>
-  <div id="footer">Tunnel Run — a free arcade game</div>
+  <div id="footer">光廊冲刺 — 免费街机小游戏</div>
 </div>
 <script>
 "use strict";
@@ -195,7 +195,7 @@ function addScore(x, y, color) {
   score++;
   updateScoreHUD();
   floatText(x, y, "+1", color);
-  if (score % 100 === 0) { floatText(W / 2, H * 0.35, "SPEED UP", "#ffd76a"); beep(880, 0.12, "square", 0.05); }
+  if (score % 100 === 0) { floatText(W / 2, H * 0.35, "提速！", "#ffd76a"); beep(880, 0.12, "square", 0.05); }
 }
 
 // ---------- 生成 ----------
@@ -265,11 +265,11 @@ function die() {
 }
 function showOver() {
   state = "OVER";
-  document.getElementById("ovTitle").textContent = "GAME OVER";
-  document.getElementById("ovText").innerHTML = newBest ? "New best run!" : "The tunnel claims another runner.";
+  document.getElementById("ovTitle").textContent = "游戏结束";
+  document.getElementById("ovText").innerHTML = newBest ? "刷新最高纪录！" : "再跑一次，试试走得更远。";
   var fs = document.getElementById("finalScore");
   fs.style.display = "block"; fs.textContent = score;
-  document.getElementById("mainBtn").textContent = "PLAY AGAIN";
+  document.getElementById("mainBtn").textContent = "再来一局";
   document.getElementById("overlay").style.display = "flex";
 }
 
@@ -303,7 +303,7 @@ function update(dt) {
     // 追平旧纪录的瞬间提示
     if (best > 0 && score === best + 1 && !newBest) {
       newBest = true;
-      floatText(W / 2, H * 0.42, "NEW BEST!", "#ffd76a");
+      floatText(W / 2, H * 0.42, "新纪录！", "#ffd76a");
       beep(990, 0.14, "triangle", 0.08);
     }
 
@@ -340,7 +340,7 @@ function update(dt) {
       var dx2 = s.x - px, dy2 = s.y - PY;
       if (dx2 * dx2 + dy2 * dy2 < (s.r + BALL_R + 2) * (s.r + BALL_R + 2)) {
         pickups.splice(i, 1); shield = true;
-        floatText(s.x, s.y - 16, "SHIELD", "#ffd76a");
+        floatText(s.x, s.y - 16, "护盾！", "#ffd76a");
         burst(s.x, s.y, "#ffd76a", 14, 180);
         beep(620, 0.09, "square", 0.08);
         setTimeout(function () { beep(930, 0.12, "square", 0.08); }, 90);
@@ -591,7 +591,7 @@ document.addEventListener("keyup", function (e) {
 document.getElementById("mainBtn").addEventListener("click", function (e) { e.stopPropagation(); startRun(); });
 
 var muteBtn = document.getElementById("muteBtn");
-function muteLabel() { muteBtn.textContent = muted ? "SFX OFF" : "SFX ON"; }
+function muteLabel() { muteBtn.textContent = muted ? "音效:关" : "音效:开"; }
 muteBtn.addEventListener("click", function (e) {
   e.stopPropagation();
   muted = !muted;
